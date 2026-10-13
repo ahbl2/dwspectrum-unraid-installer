@@ -384,3 +384,19 @@ class PostformatGuardTests(unittest.TestCase):
             with mock.patch.object(tool,'IMAGE',img),mock.patch.object(tool,'TARGET',target),mock.patch.object(tool,'check_cache'),mock.patch.object(tool,'run',side_effect=fake_run),mock.patch.object(tool,'assert_reserved_space'),mock.patch.object(tool.os,'posix_fallocate'),mock.patch.object(tool.os,'chown'):
                 with self.assertRaisesRegex(tool.Refused,'capacity'):tool.provision()
             self.assertFalse((target/tool.MARKER).exists())
+
+class FreshPostformatValidationTests(unittest.TestCase):
+    def test_missing_btrfs_nocow_fails_without_mounting(self):
+        tool=module('fresh_nocow_refusal','fresh-install.py')
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td);image=root/'image'/'storage.ext4';target=root/'mount'
+            calls=[]
+            def fake_run(*args):
+                calls.append(args)
+                if args[0]=='lsattr':return '--------------------- '+str(image)
+                return ''
+            with mock.patch.object(tool,'IMAGE',image),mock.patch.object(tool,'TARGET',target),mock.patch.object(tool,'check_cache'),mock.patch.object(tool,'run',side_effect=fake_run):
+                with self.assertRaisesRegex(tool.Refused,'NOCOW'):tool.provision()
+            self.assertTrue(image.exists())
+            self.assertFalse(any(x[0]=='mkfs.ext4' for x in calls))
+            self.assertFalse(any(x[0]=='mount' for x in calls))
