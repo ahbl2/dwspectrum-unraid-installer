@@ -87,7 +87,17 @@ def provision():
         os.posix_fallocate(fd,0,CAPACITY)
         os.fsync(fd)
         os.close(fd);fd=None
-        run('mkfs.ext4','-F','-q','-E','nodiscard',str(IMAGE))
+        # Disable ext4 lazy initialization: background writes to an ext4 loop
+        # image on btrfs can release previously preallocated host extents.
+        run('mkfs.ext4','-F','-q','-E','nodiscard,lazy_itable_init=0,lazy_journal_init=0',str(IMAGE))
+        # Re-reserve only missing extents after formatting, while unmounted.
+        # posix_fallocate preserves existing filesystem bytes (unlike writing zeros).
+        fd=os.open(IMAGE,os.O_RDWR|os.O_NOFOLLOW)
+        try:
+            os.posix_fallocate(fd,0,CAPACITY)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
         assert_reserved_space()
         run('mount','-o','loop,noatime,nosuid,nodev',str(IMAGE),str(TARGET))
         if run('findmnt','-rn','-T',str(TARGET),'-o','FSTYPE')!='ext4':

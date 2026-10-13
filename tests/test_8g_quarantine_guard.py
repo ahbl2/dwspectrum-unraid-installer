@@ -18,6 +18,6 @@ class QuarantineGuardTests(unittest.TestCase):
         source=(ROOT/'scripts/fresh-install.py').read_text()
         self.assertIn('CAPACITY = 8 * 1024**3', source)
         self.assertIn('os.posix_fallocate(fd,0,CAPACITY)', source)
-        self.assertIn("run('mkfs.ext4','-F','-q','-E','nodiscard'", source)
+        self.assertIn("run('mkfs.ext4','-F','-q','-E','nodiscard,lazy_itable_init=0,lazy_journal_init=0'", source)
 
 if __name__=='__main__': unittest.main()

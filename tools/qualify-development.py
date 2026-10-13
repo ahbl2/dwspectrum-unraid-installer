@@ -45,7 +45,7 @@ def check():
     no_escalations=(results['no_lifecycle_hooks_or_inherited_mounts'] and service.get('privileged') is not True and not service.get('cap_add') and not service.get('devices') and not service.get('device_cgroup_rules') and (service.get('use_api_socket') is False or 'use_api_socket' not in service) and all(k not in service for k in ('pid','ipc','network_mode','userns_mode','uts','cgroup','cgroup_parent')) and service.get('security_opt')==['no-new-privileges:true'])
     results['privilege_boundary']=(results['approved_compose_keys'] and results['approved_volume_keys'] and results['single_service_only'] and no_escalations and service.get('user')=='999:999' and service.get('read_only') is True and service.get('cap_drop')==['ALL'] and service.get('restart')=='no')
     results['manual_activation_gate']=('.pending-activation' in (ROOT/'scripts/verified-start.sh').read_text() and 'disable-fresh-storage-writing.py' in (ROOT/'scripts/install-fresh.sh').read_text())
-    results['reserved_nocow_ext4']=all(x in (ROOT/'scripts/fresh-install.py').read_text() for x in ("'chattr','+C'","'nodiscard'",'os.posix_fallocate','st.st_blocks'))
+    results['reserved_nocow_ext4']=all(x in (ROOT/'scripts/fresh-install.py').read_text() for x in ("'chattr','+C'","'nodiscard,lazy_itable_init=0,lazy_journal_init=0'",'os.posix_fallocate','st.st_blocks'))
     # Community Applications Docker XML is deliberately forbidden until a proven
     # installer wrapper can enforce provisioning/verification BEFORE container creation.
     def is_ca_xml(path):
