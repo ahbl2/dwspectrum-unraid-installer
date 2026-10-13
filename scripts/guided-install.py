@@ -32,6 +32,8 @@ def check_unraid(refuse_container=True):
         raise Refused('Unraid operating system or boot flash not detected')
     if run('docker','compose','version')!=0:
         raise Refused('Docker Compose unavailable')
+    if run('docker','info','--format','{{.ServerVersion}}')!=0:
+        raise Refused('Docker daemon unavailable; refusing uncertain state')
     probe=subprocess.run(['docker','container','inspect','dwspectrum'],
                          capture_output=True,check=False)
     if probe.returncode==0 and refuse_container:
