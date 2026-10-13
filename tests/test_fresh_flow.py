@@ -355,3 +355,32 @@ class PostformatReservationTests(unittest.TestCase):
                 with self.assertRaises(OSError):tool.provision()
             self.assertTrue(img.exists())
             self.assertFalse(any(x[0]=='mount' for x in calls))
+
+class PostformatGuardTests(unittest.TestCase):
+    def test_wrong_loop_source_is_refused_after_postformat_reservation(self):
+        tool=module('fresh_bad_loop','fresh-install.py')
+        with tempfile.TemporaryDirectory() as td:
+            base=Path(td);img=base/'volume'/'storage.ext4';target=base/'quarantine'
+            def fake_run(*args):
+                if args[0]=='lsattr':return '---------------C----- '+str(img)
+                if 'FSTYPE' in args:return 'ext4'
+                if 'SOURCE' in args:return '/dev/sda1'
+                return ''
+            with mock.patch.object(tool,'IMAGE',img),mock.patch.object(tool,'TARGET',target),mock.patch.object(tool,'check_cache'),mock.patch.object(tool,'run',side_effect=fake_run),mock.patch.object(tool,'assert_reserved_space'),mock.patch.object(tool.os,'posix_fallocate'),mock.patch.object(tool.os,'chown'):
+                with self.assertRaisesRegex(tool.Refused,'loop backing file'):tool.provision()
+            self.assertTrue(img.exists())
+
+    def test_wrong_ext4_capacity_refused_even_when_fully_allocated(self):
+        tool=module('fresh_bad_capacity','fresh-install.py')
+        with tempfile.TemporaryDirectory() as td:
+            base=Path(td);img=base/'volume'/'storage.ext4';target=base/'quarantine'
+            def fake_run(*args):
+                if args[0]=='lsattr':return '---------------C----- '+str(img)
+                if 'FSTYPE' in args:return 'ext4'
+                if 'SOURCE' in args:return '/dev/loop4'
+                if 'BACK-FILE' in args:return str(img)
+                if args[0]=='df':return 'Size\n1234'
+                return ''
+            with mock.patch.object(tool,'IMAGE',img),mock.patch.object(tool,'TARGET',target),mock.patch.object(tool,'check_cache'),mock.patch.object(tool,'run',side_effect=fake_run),mock.patch.object(tool,'assert_reserved_space'),mock.patch.object(tool.os,'posix_fallocate'),mock.patch.object(tool.os,'chown'):
+                with self.assertRaisesRegex(tool.Refused,'capacity'):tool.provision()
+            self.assertFalse((target/tool.MARKER).exists())

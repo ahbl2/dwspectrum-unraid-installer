@@ -99,6 +99,7 @@ def provision():
             os.fsync(fd)
         finally:
             os.close(fd)
+            fd=None
         assert_reserved_space()
         run('mount','-o','loop,noatime,nosuid,nodev',str(IMAGE),str(TARGET))
         if run('findmnt','-rn','-T',str(TARGET),'-o','FSTYPE')!='ext4':
