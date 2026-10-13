@@ -143,3 +143,14 @@ class CommissioningContainerTests(unittest.TestCase):
             proc.return_value.returncode=0
             with self.assertRaises(guided.Refused):
                 guided.check_unraid(refuse_container=True)
+
+
+class DockerDaemonGateTests(unittest.TestCase):
+    def test_daemon_unreachable_fails_closed(self):
+        with mock.patch.object(guided.os,'geteuid',return_value=0), mock.patch.object(guided.Path,'is_file',return_value=True), mock.patch.object(guided,'run',side_effect=[0,125]) as run:
+            with self.assertRaisesRegex(guided.Refused,'Docker daemon unavailable'):
+                guided.check_unraid()
+            self.assertEqual(run.call_count,2)
+    def test_daemon_check_precedes_container_inspection(self):
+        s=SCRIPT.read_text()
+        self.assertLess(s.index("'docker','info'"),s.index("'docker','container','inspect'"))
