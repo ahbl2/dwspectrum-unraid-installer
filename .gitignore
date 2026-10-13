@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.tar.gz
+*.pcap
+*credentials*
+*.secret
+.env
+
+!scripts/enroll-api-credentials.py
+
+# Local test coverage artifacts
+.coverage
+coverage.xml

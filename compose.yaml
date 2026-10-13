@@ -1,0 +1,60 @@
+services:
+  dwspectrum:
+    image: ghcr.io/ahbl2/dwspectrum-unraid@sha256:e8e456aa866034b5c8ba4c5704604171659baf8b1158c2c9cafdfced59b4fcaa
+    container_name: dwspectrum
+    labels:
+      net.unraid.docker.webui: "https://[IP]:[PORT:7203]/"
+      net.unraid.docker.icon: "https://raw.githubusercontent.com/ptr727/NxWitness/main/Unraid/DWLogo.png"
+    user: "999:999"
+    # Override vendor-image preflight that requires writable recording media.
+    # Keep system initialization, but refuse a writable archive path.
+    entrypoint:
+      - /bin/bash
+      - -euc
+      - |
+        [[ "$(stat -f -c %T /dwdata)" == "ext2/ext3" ]] || exit 42
+        [[ -d /dwdata/config && -d /dwdata/media ]] || exit 42
+        [[ -w /dwdata/config && ! -w /dwdata/media ]] || exit 42
+        mkdir -p /dwdata/config/etc /dwdata/config/var /dwdata/config/ini
+        [[ -d /dwdata/backup && -d /dwdata/analytics ]] || exit 42
+        if [[ ! -e /dwdata/config/.initialized ]]; then
+          cp -a /opt/dw-seed/etc/. /dwdata/config/etc/
+          cp -a /opt/dw-seed/var/. /dwdata/config/var/
+          touch /dwdata/config/.initialized
+        fi
+        exec /opt/digitalwatchdog/mediaserver/bin/mediaserver -e
+    read_only: true
+    restart: "no"
+    mem_limit: 4g
+    cpus: 2.0
+    ports:
+      - "7203:7001/tcp"
+    environment:
+      TZ: America/New_York
+      HOME: /home/digitalwatchdog
+    volumes:
+      - type: bind
+        source: /mnt/cache/dwspectrum-quarantine
+        target: /dwdata
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /mnt/cache/dwspectrum-quarantine/config
+        target: /dwdata/config
+        read_only: false
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp:size=134217728,nosuid,nodev
+      - /run:size=16777216,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 512
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
