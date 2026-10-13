@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FILES = (
     'Dockerfile', 'docker-entrypoint.sh', 'compose.yaml',
     'scripts/install-fresh.sh', 'scripts/fresh-install.py',
+    'scripts/guided-install.py',
     'scripts/build-official-image.py', 'scripts/private-setup.sh',
     'scripts/verified-start.sh', 'scripts/verify-quarantine.sh',
     'scripts/verify-view-only.sh', 'scripts/disable-fresh-storage-writing.py',
