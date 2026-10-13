@@ -127,3 +127,19 @@ class GuidedRemainingBranches(unittest.TestCase):
     def test_image_symlink_refused(self):
         with mock.patch.object(guided.Path,'exists',return_value=False),mock.patch.object(guided.Path,'is_symlink',side_effect=[False,True]):
             with self.assertRaisesRegex(guided.Refused,'existing storage'):guided.check_install_target()
+
+
+class CommissioningContainerTests(unittest.TestCase):
+    def test_commissioning_accepts_preexisting_container(self):
+        with mock.patch.object(guided.os,'geteuid',return_value=0),mock.patch.object(guided.Path,'is_file',return_value=True),mock.patch.object(guided,'run',return_value=0),mock.patch.object(guided.subprocess,'run') as proc:
+            proc.return_value.returncode=0
+            guided.check_unraid(refuse_container=False)
+    def test_verify_will_not_refuse_container_from_bootstrap(self):
+        with mock.patch.object(guided,'check_unraid') as check,mock.patch.object(guided.Path,'is_file',return_value=True),mock.patch.object(guided,'run',return_value=0),mock.patch.object(sys,'argv',['guided-install.py','verify','--apply']):
+            self.assertEqual(guided.main(),0)
+            check.assert_called_once_with(refuse_container=False)
+    def test_fresh_install_still_refuses_existing_container(self):
+        with mock.patch.object(guided.os,'geteuid',return_value=0),mock.patch.object(guided.Path,'is_file',return_value=True),mock.patch.object(guided,'run',return_value=0),mock.patch.object(guided.subprocess,'run') as proc:
+            proc.return_value.returncode=0
+            with self.assertRaises(guided.Refused):
+                guided.check_unraid(refuse_container=True)

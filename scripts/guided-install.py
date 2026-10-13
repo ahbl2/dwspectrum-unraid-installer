@@ -25,7 +25,7 @@ class Refused(Exception):
 def run(*command):
     return subprocess.run([str(x) for x in command],check=False).returncode
 
-def check_unraid():
+def check_unraid(refuse_container=True):
     if os.geteuid()!=0:
         raise Refused('run as root on a disposable/new Unraid host')
     if not Path('/etc/unraid-version').is_file() or not Path('/boot/config/go').is_file():
@@ -34,9 +34,9 @@ def check_unraid():
         raise Refused('Docker Compose unavailable')
     probe=subprocess.run(['docker','container','inspect','dwspectrum'],
                          capture_output=True,check=False)
-    if probe.returncode==0:
+    if probe.returncode==0 and refuse_container:
         raise Refused('existing dwspectrum container detected; will not reinstall')
-    if probe.returncode not in (1,):
+    if probe.returncode not in (0,1):
         raise Refused('Docker daemon inspection failed; refusing uncertain state')
 
 def check_install_target():
@@ -91,7 +91,7 @@ def main():
         return run(sys.executable,FRESH,'doctor')
     if not args.apply:
         raise Refused('state-changing steps require --apply; run plan and doctor first')
-    check_unraid()
+    check_unraid(refuse_container=args.step in ('install','resume'))
     preflight_step(args.step)
     if args.step=='enroll':
         if not (DEST/'.pending-activation').is_file():
