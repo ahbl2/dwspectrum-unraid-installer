@@ -24,6 +24,7 @@ class PrivatePackageTests(unittest.TestCase):
     def test_package_contains_private_lifecycle_dependencies(self):
         required={
             'scripts/install-fresh.sh','scripts/private-setup.sh',
+            'scripts/guided-install.py',
             'scripts/watch-array-lifecycle.sh','scripts/rollback-plan.sh',
             'scripts/prepare-update.sh','scripts/update-plan.py',
             'scripts/update-status.py','scripts/discover-official-release.py',
