@@ -105,3 +105,25 @@ class GuidedDispatchTests(unittest.TestCase):
             with self.subTest(step=step),mock.patch.object(guided,'check_unraid'),mock.patch.object(guided.Path,'is_file',return_value=True),mock.patch.object(guided,'run',return_value=0) as run:
                 self.assertEqual(self.invoke(step,True),0)
                 self.assertEqual(run.call_args.args[-2:],(step,'--apply'))
+
+class GuidedRemainingBranches(unittest.TestCase):
+    def invoke(self,step):
+        with mock.patch.object(sys,'argv',['guided-install.py',step,'--apply']):
+            return guided.main()
+    def test_stage_status_reports_pending(self):
+        with mock.patch.object(guided.Path,'is_file',side_effect=[True,True]):
+            guided.stage_status()
+    def test_stage_status_reports_activated(self):
+        with mock.patch.object(guided.Path,'is_file',side_effect=[False,True]):
+            guided.stage_status()
+    def test_resume_dispatch(self):
+        with mock.patch.object(guided,'check_unraid'),mock.patch.object(guided.Path,'exists',side_effect=[True,False]),mock.patch.object(guided,'run',return_value=0) as run:
+            self.assertEqual(self.invoke('resume'),0)
+            self.assertEqual(run.call_args.args[-2:],('resume','--apply'))
+    def test_enrollment_dispatch(self):
+        with mock.patch.object(guided,'check_unraid'),mock.patch.object(guided.Path,'is_file',return_value=True),mock.patch.object(guided,'run',return_value=0) as run:
+            self.assertEqual(self.invoke('enroll'),0)
+            self.assertIn('enroll-api-credentials.py',str(run.call_args.args[1]))
+    def test_image_symlink_refused(self):
+        with mock.patch.object(guided.Path,'exists',return_value=False),mock.patch.object(guided.Path,'is_symlink',side_effect=[False,True]):
+            with self.assertRaisesRegex(guided.Refused,'existing storage'):guided.check_install_target()
