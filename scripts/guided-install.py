@@ -16,6 +16,7 @@ INSTALLER = ROOT / 'scripts/install-fresh.sh'
 FRESH = ROOT / 'scripts/fresh-install.py'
 DEST = Path('/boot/config/dwspectrum-quarantine')
 IMAGE = Path('/mnt/cache/dwspectrum-volume/storage.ext4')
+COMPOSE_NAME = 'compose.yaml'
 STEPS = ('plan', 'doctor', 'install', 'resume', 'bootstrap', 'enroll', 'activate', 'verify')
 
 class Refused(Exception):
@@ -39,16 +40,19 @@ def check_unraid():
         raise Refused('Docker daemon inspection failed; refusing uncertain state')
 
 def check_install_target():
-    if (DEST/'compose.yaml').exists() or (DEST/'compose.yaml').is_symlink():
+    if (DEST/COMPOSE_NAME).exists() or (DEST/COMPOSE_NAME).is_symlink():
         raise Refused('existing installed configuration detected')
     if IMAGE.exists() or IMAGE.is_symlink():
         raise Refused('existing storage image detected; use resume only after checking pristine state')
 
 def stage_status():
     pending=(DEST/'.pending-activation').is_file()
-    installed=(DEST/'compose.yaml').is_file()
+    installed=(DEST/COMPOSE_NAME).is_file()
     print('Install configuration:', 'present' if installed else 'not staged')
-    print('Activation:', 'pending' if pending else ('unknown/previously activated' if installed else 'not started'))
+    activation='not started'
+    if installed:
+        activation='pending' if pending else 'unknown/previously activated'
+    print('Activation:', activation)
     if installed and not pending:
         print('For an existing installation use its guarded manage.sh commands; no reinstall.')
 
@@ -58,6 +62,16 @@ def banner():
     print('Supported fresh installs require a mounted btrfs cache pool with 23 GiB available.')
     print('No operation will overwrite existing VMS data.')
     print()
+
+def preflight_step(step):
+    if step=='install':
+        check_install_target()
+        if run(sys.executable,FRESH,'doctor')!=0:
+            raise Refused('fresh provision preflight failed')
+    if step=='resume' and not (IMAGE.exists() and not (DEST/COMPOSE_NAME).exists()):
+        raise Refused('resume requires preexisting incomplete storage and no staged Compose')
+    if step in ('bootstrap','enroll','activate','verify') and not (DEST/COMPOSE_NAME).is_file():
+        raise Refused('installer has not staged a protected Compose manifest')
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
@@ -78,15 +92,7 @@ def main():
     if not args.apply:
         raise Refused('state-changing steps require --apply; run plan and doctor first')
     check_unraid()
-    if args.step=='install':
-        check_install_target()
-        if run(sys.executable,FRESH,'doctor')!=0:
-            raise Refused('fresh provision preflight failed')
-    if args.step=='resume' and not (IMAGE.exists() and not (DEST/'compose.yaml').exists()):
-        raise Refused('resume requires preexisting incomplete storage and no staged Compose')
-    if args.step in ('bootstrap','enroll','activate','verify'):
-        if not (DEST/'compose.yaml').is_file():
-            raise Refused('installer has not staged a protected Compose manifest')
+    preflight_step(args.step)
     if args.step=='enroll':
         if not (DEST/'.pending-activation').is_file():
             raise Refused('credentials can only be enrolled during initial commissioning')
