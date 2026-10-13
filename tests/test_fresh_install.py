@@ -131,8 +131,17 @@ class CapacityReservationTests(unittest.TestCase):
 class FormattingReservationTests(unittest.TestCase):
     def test_mkfs_does_not_discard_preallocated_blocks(self):
         source=(ROOT/'scripts/fresh-install.py').read_text()
-        self.assertIn("'mkfs.ext4','-F','-q','-E','nodiscard'",source)
+        self.assertIn("'mkfs.ext4','-F','-q','-E','nodiscard,lazy_itable_init=0,lazy_journal_init=0'",source)
         self.assertIn('st.st_blocks * 512',source)
+    def test_postformat_reservation_is_before_first_mount(self):
+        source=(ROOT/'scripts/fresh-install.py').read_text()
+        begin=source.index("run('mkfs.ext4'")
+        second=source.index('os.posix_fallocate(fd,0,CAPACITY)',begin)
+        mounted=source.index("run('mount','-o','loop,noatime,nosuid,nodev'",begin)
+        self.assertLess(begin,second)
+        self.assertLess(second,mounted)
+        self.assertIn('os.O_NOFOLLOW',source)
+
     def test_recovery_mounts_missing_loop_and_refuses_nonempty_target(self):
         source=(ROOT/'scripts/fresh-install.py').read_text()
         self.assertIn("'loop,noatime,nosuid,nodev'",source)

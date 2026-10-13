@@ -12,6 +12,7 @@ import subprocess
 import sys
 
 CAPACITY = 8 * 1024**3
+LOOP_PREFIX = '/dev/loop'
 IMAGE = Path('/mnt/cache/dwspectrum-volume/storage.ext4')
 TARGET = Path('/mnt/cache/dwspectrum-quarantine')
 CACHE = Path('/mnt/cache')
@@ -87,13 +88,24 @@ def provision():
         os.posix_fallocate(fd,0,CAPACITY)
         os.fsync(fd)
         os.close(fd);fd=None
-        run('mkfs.ext4','-F','-q','-E','nodiscard',str(IMAGE))
+        # Disable ext4 lazy initialization: background writes to an ext4 loop
+        # image on btrfs can release previously preallocated host extents.
+        run('mkfs.ext4','-F','-q','-E','nodiscard,lazy_itable_init=0,lazy_journal_init=0',str(IMAGE))
+        # Re-reserve only missing extents after formatting, while unmounted.
+        # posix_fallocate preserves existing filesystem bytes (unlike writing zeros).
+        fd=os.open(IMAGE,os.O_RDWR|os.O_NOFOLLOW)
+        try:
+            os.posix_fallocate(fd,0,CAPACITY)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+            fd=None
         assert_reserved_space()
         run('mount','-o','loop,noatime,nosuid,nodev',str(IMAGE),str(TARGET))
         if run('findmnt','-rn','-T',str(TARGET),'-o','FSTYPE')!='ext4':
             raise Refused('mounted filesystem is not ext4')
         src=run('findmnt','-rn','-T',str(TARGET),'-o','SOURCE')
-        if not src.startswith('/dev/loop') or run('losetup','-n','-O','BACK-FILE',src)!=str(IMAGE):
+        if not src.startswith(LOOP_PREFIX) or run('losetup','-n','-O','BACK-FILE',src)!=str(IMAGE):
             raise Refused('loop backing file verification failed')
         size=int(run('df','-B1','--output=size',str(TARGET)).splitlines()[-1])
         if not 7_900_000_000 < size < 8_700_000_000:
@@ -125,7 +137,7 @@ def check_resume():
     if run('findmnt','-rn','-T',str(TARGET),'-o','FSTYPE')!='ext4':
         raise Refused('quarantine must be ext4')
     src=run('findmnt','-rn','-T',str(TARGET),'-o','SOURCE')
-    if not src.startswith('/dev/loop') or run('losetup','-n','-O','BACK-FILE',src)!=str(IMAGE):
+    if not src.startswith(LOOP_PREFIX) or run('losetup','-n','-O','BACK-FILE',src)!=str(IMAGE):
         raise Refused('unexpected loop backing file')
     marker=TARGET/MARKER
     if marker.is_symlink() or not marker.is_file() or marker.read_text()!=MARKER_CONTENT:
@@ -146,7 +158,7 @@ def recover_pre_marker():
     if run('findmnt','-rn','-T',str(TARGET),'-o','FSTYPE')!='ext4':
         raise Refused('recovery target is not ext4')
     src=run('findmnt','-rn','-T',str(TARGET),'-o','SOURCE')
-    if not src.startswith('/dev/loop') or run('losetup','-n','-O','BACK-FILE',src)!=str(IMAGE):
+    if not src.startswith(LOOP_PREFIX) or run('losetup','-n','-O','BACK-FILE',src)!=str(IMAGE):
         raise Refused('unexpected loop backing')
     if (TARGET/MARKER).exists():
         raise Refused('provision marker already present; use resume-doctor')
