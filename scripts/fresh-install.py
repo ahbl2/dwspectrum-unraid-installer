@@ -12,6 +12,7 @@ import subprocess
 import sys
 
 CAPACITY = 8 * 1024**3
+LOOP_PREFIX = '/dev/loop'
 IMAGE = Path('/mnt/cache/dwspectrum-volume/storage.ext4')
 TARGET = Path('/mnt/cache/dwspectrum-quarantine')
 CACHE = Path('/mnt/cache')
@@ -103,7 +104,7 @@ def provision():
         if run('findmnt','-rn','-T',str(TARGET),'-o','FSTYPE')!='ext4':
             raise Refused('mounted filesystem is not ext4')
         src=run('findmnt','-rn','-T',str(TARGET),'-o','SOURCE')
-        if not src.startswith('/dev/loop') or run('losetup','-n','-O','BACK-FILE',src)!=str(IMAGE):
+        if not src.startswith(LOOP_PREFIX) or run('losetup','-n','-O','BACK-FILE',src)!=str(IMAGE):
             raise Refused('loop backing file verification failed')
         size=int(run('df','-B1','--output=size',str(TARGET)).splitlines()[-1])
         if not 7_900_000_000 < size < 8_700_000_000:
@@ -135,7 +136,7 @@ def check_resume():
     if run('findmnt','-rn','-T',str(TARGET),'-o','FSTYPE')!='ext4':
         raise Refused('quarantine must be ext4')
     src=run('findmnt','-rn','-T',str(TARGET),'-o','SOURCE')
-    if not src.startswith('/dev/loop') or run('losetup','-n','-O','BACK-FILE',src)!=str(IMAGE):
+    if not src.startswith(LOOP_PREFIX) or run('losetup','-n','-O','BACK-FILE',src)!=str(IMAGE):
         raise Refused('unexpected loop backing file')
     marker=TARGET/MARKER
     if marker.is_symlink() or not marker.is_file() or marker.read_text()!=MARKER_CONTENT:
@@ -156,7 +157,7 @@ def recover_pre_marker():
     if run('findmnt','-rn','-T',str(TARGET),'-o','FSTYPE')!='ext4':
         raise Refused('recovery target is not ext4')
     src=run('findmnt','-rn','-T',str(TARGET),'-o','SOURCE')
-    if not src.startswith('/dev/loop') or run('losetup','-n','-O','BACK-FILE',src)!=str(IMAGE):
+    if not src.startswith(LOOP_PREFIX) or run('losetup','-n','-O','BACK-FILE',src)!=str(IMAGE):
         raise Refused('unexpected loop backing')
     if (TARGET/MARKER).exists():
         raise Refused('provision marker already present; use resume-doctor')
