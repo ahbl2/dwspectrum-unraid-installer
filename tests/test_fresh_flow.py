@@ -400,3 +400,21 @@ class FreshPostformatValidationTests(unittest.TestCase):
             self.assertTrue(image.exists())
             self.assertFalse(any(x[0]=='mkfs.ext4' for x in calls))
             self.assertFalse(any(x[0]=='mount' for x in calls))
+
+class FreshReservationIntegrityTests(unittest.TestCase):
+    def test_unexpected_backing_source_after_mkfs_fails_closed(self):
+        tool=module('fresh_backing_source','fresh-install.py')
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td);image=root/'image'/'storage.ext4';target=root/'mount'
+            calls=[]
+            def run(*args):
+                calls.append(args)
+                if args[0]=='lsattr':return '---------------C----- '+str(image)
+                if 'FSTYPE' in args:return 'ext4'
+                if 'SOURCE' in args:return '/dev/loop8'
+                if 'BACK-FILE' in args:return '/other/storage.ext4'
+                return ''
+            with mock.patch.object(tool,'IMAGE',image),mock.patch.object(tool,'TARGET',target),mock.patch.object(tool,'check_cache'),mock.patch.object(tool,'run',side_effect=run),mock.patch.object(tool,'assert_reserved_space'),mock.patch.object(tool.os,'posix_fallocate'):
+                with self.assertRaisesRegex(tool.Refused,'backing file verification'):tool.provision()
+            self.assertFalse((target/tool.MARKER).exists())
+            self.assertEqual(len([x for x in calls if x[0]=='mkfs.ext4']),1)
