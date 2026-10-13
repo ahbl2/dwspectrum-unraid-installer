@@ -320,3 +320,38 @@ class PreformatPreservationTests(unittest.TestCase):
             with mock.patch.object(tool,'CACHE',cache),mock.patch.object(tool,'IMAGE',img),mock.patch.object(tool,'TARGET',target),mock.patch.object(tool,'mounted',side_effect=lambda q:q==cache),mock.patch.object(tool.os,'geteuid',return_value=0),mock.patch.object(tool,'assert_reserved_space'),mock.patch.object(tool,'run',return_value='---------------C---- /test'),mock.patch.object(tool.subprocess,'run',return_value=fake):
                 with self.assertRaisesRegex(tool.Refused,'detectable filesystem'):tool.preserve_unmountable_preformat()
             self.assertTrue(img.exists())
+
+class PostformatReservationTests(unittest.TestCase):
+    def test_provision_reserves_twice_and_mounts_only_after_checks(self):
+        tool=module('fresh_reservation_success','fresh-install.py')
+        with tempfile.TemporaryDirectory() as td:
+            base=Path(td); img=base/'volume'/'storage.ext4'; target=base/'quarantine'
+            calls=[]
+            def fake_run(*args):
+                calls.append(args)
+                if args[0]=='lsattr':return '---------------C----- '+str(img)
+                if 'FSTYPE' in args:return 'ext4'
+                if 'SOURCE' in args:return '/dev/loop4'
+                if 'BACK-FILE' in args:return str(img)
+                if args[0]=='df':return 'Size\n8369172480'
+                return ''
+            with mock.patch.object(tool,'IMAGE',img),mock.patch.object(tool,'TARGET',target),mock.patch.object(tool,'check_cache'),mock.patch.object(tool,'run',side_effect=fake_run),mock.patch.object(tool,'assert_reserved_space') as reserve,mock.patch.object(tool.os,'posix_fallocate') as allocate,mock.patch.object(tool.os,'chown'):
+                tool.provision()
+            self.assertEqual(allocate.call_count,2)
+            reserve.assert_called_once()
+            self.assertEqual((target/tool.MARKER).read_text(),tool.MARKER_CONTENT)
+            self.assertLess(next(i for i,x in enumerate(calls) if x[0]=='mkfs.ext4'),next(i for i,x in enumerate(calls) if x[0]=='mount'))
+
+    def test_postformat_reservation_failure_preserves_file_without_mount(self):
+        tool=module('fresh_reservation_failure','fresh-install.py')
+        with tempfile.TemporaryDirectory() as td:
+            base=Path(td); img=base/'volume'/'storage.ext4'; target=base/'quarantine'
+            calls=[]
+            def fake_run(*args):
+                calls.append(args)
+                if args[0]=='lsattr':return '---------------C----- '+str(img)
+                return ''
+            with mock.patch.object(tool,'IMAGE',img),mock.patch.object(tool,'TARGET',target),mock.patch.object(tool,'check_cache'),mock.patch.object(tool,'run',side_effect=fake_run),mock.patch.object(tool.os,'posix_fallocate',side_effect=[None,OSError('ENOSPC')]):
+                with self.assertRaises(OSError):tool.provision()
+            self.assertTrue(img.exists())
+            self.assertFalse(any(x[0]=='mount' for x in calls))
