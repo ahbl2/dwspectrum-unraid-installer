@@ -1,5 +1,6 @@
 """No root, mkfs, Docker start, or live Unraid mount required to test refusals."""
 import importlib.util
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -49,8 +50,6 @@ class FreshInstallTests(unittest.TestCase):
         s=(ROOT/'scripts/restore-config.py').read_text()
         self.assertIn("!='false'",s)
         self.assertIn('verify(str(archive))',s)
-
-if __name__=='__main__':unittest.main()
 
 class UpdateAndRecoveryPolicyTests(unittest.TestCase):
     def test_candidate_digest_required(self):
@@ -132,7 +131,34 @@ class FormattingReservationTests(unittest.TestCase):
     def test_mkfs_does_not_discard_preallocated_blocks(self):
         source=(ROOT/'scripts/fresh-install.py').read_text()
         self.assertIn("'mkfs.ext4','-F','-q','-E','nodiscard'",source)
-        self.assertIn('st.st_blocks * 512',source)
+        self.assertIn('ensure_formatted_reservation()',source)
+
+    def test_formatted_reservation_tops_up_missing_extent_after_sync(self):
+        with tempfile.TemporaryDirectory() as td:
+            image=Path(td)/'storage.ext4'
+            with image.open('wb') as f:f.truncate(fresh.CAPACITY)
+            with mock.patch.object(fresh,'IMAGE',image), mock.patch.object(fresh,'run') as run, mock.patch.object(fresh,'assert_reserved_space') as check:
+                fresh.ensure_formatted_reservation()
+            self.assertEqual([call.args for call in run.call_args_list],[
+                ('sync','-f',str(image)),
+                ('fallocate','--keep-size','--length',str(fresh.CAPACITY),str(image)),
+                ('sync','-f',str(image)),
+            ])
+            check.assert_called_once_with()
+
+    def test_formatted_reservation_skips_top_up_when_blocks_are_reserved(self):
+        with tempfile.TemporaryDirectory() as td:
+            image=Path(td)/'storage.ext4'
+            fd=os.open(image,os.O_CREAT|os.O_RDWR,0o600)
+            try:
+                os.posix_fallocate(fd,0,4096)
+            finally:
+                os.close(fd)
+            with mock.patch.object(fresh,'IMAGE',image), mock.patch.object(fresh,'CAPACITY',4096), mock.patch.object(fresh,'run') as run, mock.patch.object(fresh,'assert_reserved_space') as check:
+                fresh.ensure_formatted_reservation()
+            self.assertEqual([call.args for call in run.call_args_list],[("sync","-f",str(image))])
+            check.assert_called_once_with()
+
     def test_recovery_mounts_missing_loop_and_refuses_nonempty_target(self):
         source=(ROOT/'scripts/fresh-install.py').read_text()
         self.assertIn("'loop,noatime,nosuid,nodev'",source)
@@ -144,3 +170,105 @@ class BtrfsNoCowPolicyTests(unittest.TestCase):
         self.assertLess(source.index("run('chattr','+C'"),source.index('os.posix_fallocate(fd,0,CAPACITY)'))
         self.assertIn("run('lsattr','-d'",source)
         self.assertIn('existing backing file lacks btrfs NOCOW',source)
+
+class FreshGuardCoverageTests(unittest.TestCase):
+    def _cache_paths(self, root):
+        cache=root/'cache'; cache.mkdir()
+        target=root/'target'; target.mkdir()
+        image=root/'volume.ext4'
+        return cache,target,image
+
+    def test_check_cache_accepts_clean_btrfs_with_headroom(self):
+        with tempfile.TemporaryDirectory() as td:
+            cache,target,image=self._cache_paths(Path(td))
+            with mock.patch.object(fresh,'CACHE',cache), mock.patch.object(fresh,'TARGET',target), mock.patch.object(fresh,'IMAGE',image), mock.patch.object(fresh.os,'geteuid',return_value=0), mock.patch.object(fresh,'mounted',side_effect=[True,False]), mock.patch.object(fresh,'run',side_effect=['btrfs',str(fresh.CAPACITY+15*1024**3)]):
+                fresh.check_cache()
+
+    def test_check_cache_refuses_nonroot(self):
+        with mock.patch.object(fresh.os,'geteuid',return_value=1000), self.assertRaisesRegex(fresh.Refused,'root privileges'):
+            fresh.check_cache()
+
+    def test_check_cache_refuses_unmounted_cache(self):
+        with mock.patch.object(fresh.os,'geteuid',return_value=0), mock.patch.object(fresh,'mounted',return_value=False), self.assertRaisesRegex(fresh.Refused,'cache pool'):
+            fresh.check_cache()
+
+    def test_check_cache_refuses_non_btrfs(self):
+        with tempfile.TemporaryDirectory() as td:
+            cache,target,image=self._cache_paths(Path(td))
+            with mock.patch.object(fresh,'CACHE',cache), mock.patch.object(fresh,'TARGET',target), mock.patch.object(fresh,'IMAGE',image), mock.patch.object(fresh.os,'geteuid',return_value=0), mock.patch.object(fresh,'mounted',side_effect=[True,False]), mock.patch.object(fresh,'run',return_value='xfs'), self.assertRaisesRegex(fresh.Refused,'unexpected cache filesystem'):
+                fresh.check_cache()
+
+    def test_check_cache_refuses_mounted_target_existing_image_nonempty_target_and_low_space(self):
+        cases={
+            'mounted':'quarantine target already mounted',
+            'image':'backing file already exists',
+            'nonempty':'target contains existing files',
+            'low-space':'insufficient cache headroom',
+        }
+        for case,reason in cases.items():
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as td:
+                cache,target,image=self._cache_paths(Path(td))
+                if case=='image': image.write_bytes(b'keep')
+                if case=='nonempty': (target/'keep').write_text('keep')
+                mounts=[True,case=='mounted']
+                avail=fresh.CAPACITY+15*1024**3-1 if case=='low-space' else fresh.CAPACITY+15*1024**3
+                with mock.patch.object(fresh,'CACHE',cache), mock.patch.object(fresh,'TARGET',target), mock.patch.object(fresh,'IMAGE',image), mock.patch.object(fresh.os,'geteuid',return_value=0), mock.patch.object(fresh,'mounted',side_effect=mounts), mock.patch.object(fresh,'run',side_effect=['btrfs',str(avail)]), self.assertRaisesRegex(fresh.Refused,reason):
+                    fresh.check_cache()
+
+    def test_assert_reserved_space_requires_exact_size_and_real_blocks(self):
+        with tempfile.TemporaryDirectory() as td:
+            image=Path(td)/'volume.ext4'
+            with image.open('wb') as f: f.truncate(4096)
+            with mock.patch.object(fresh,'IMAGE',image), mock.patch.object(fresh,'CAPACITY',4096):
+                with self.assertRaisesRegex(fresh.Refused,'not fully allocated'):
+                    fresh.assert_reserved_space()
+                with image.open('r+b') as f: os.posix_fallocate(f.fileno(),0,4096)
+                fresh.assert_reserved_space()
+                with mock.patch.object(fresh,'CAPACITY',8192), self.assertRaisesRegex(fresh.Refused,'not fully allocated'):
+                    fresh.assert_reserved_space()
+
+    def test_recovery_mount_accepts_verified_loop(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td); cache=root/'cache'; cache.mkdir(); target=root/'target'; target.mkdir(); image=root/'volume.ext4'
+            with image.open('wb') as f: os.posix_fallocate(f.fileno(),0,4096)
+            with mock.patch.object(fresh,'CACHE',cache), mock.patch.object(fresh,'TARGET',target), mock.patch.object(fresh,'IMAGE',image), mock.patch.object(fresh,'CAPACITY',4096), mock.patch.object(fresh.os,'geteuid',return_value=0), mock.patch.object(fresh,'mounted',side_effect=[True,False]), mock.patch.object(fresh,'run',return_value='----C-----') as run:
+                fresh.recovery_mount()
+            self.assertEqual(run.call_args.args,('mount','-o','loop,noatime,nosuid,nodev',str(image),str(target)))
+
+    def test_recovery_mount_refuses_missing_nocow_or_nonempty_target(self):
+        for case in ('nocow','nonempty'):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as td:
+                root=Path(td); cache=root/'cache'; cache.mkdir(); target=root/'target'; target.mkdir(); image=root/'volume.ext4'
+                with image.open('wb') as f: os.posix_fallocate(f.fileno(),0,4096)
+                if case=='nonempty': (target/'keep').write_text('keep')
+                attrs='----------' if case=='nocow' else '----C-----'
+                with mock.patch.object(fresh,'CACHE',cache), mock.patch.object(fresh,'TARGET',target), mock.patch.object(fresh,'IMAGE',image), mock.patch.object(fresh,'CAPACITY',4096), mock.patch.object(fresh.os,'geteuid',return_value=0), mock.patch.object(fresh,'mounted',side_effect=[True,False]), mock.patch.object(fresh,'run',return_value=attrs), self.assertRaises(fresh.Refused):
+                    fresh.recovery_mount()
+
+    def test_provision_builds_reserved_ext4_without_starting_services(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td); image=root/'volume'/'storage.ext4'; target=root/'target'
+            target.mkdir()
+            def command(*args,**kwargs):
+                if args[0]=='lsattr': return '----C-----'
+                if args[0]=='findmnt' and args[-1]=='FSTYPE': return 'ext4'
+                if args[0]=='findmnt' and args[-1]=='SOURCE': return '/dev/loop9'
+                if args[0]=='losetup': return str(image)
+                if args[0]=='df': return '8000000000'
+                return ''
+            with mock.patch.object(fresh,'IMAGE',image), mock.patch.object(fresh,'TARGET',target), mock.patch.object(fresh,'CAPACITY',4096), mock.patch.object(fresh,'check_cache'), mock.patch.object(fresh,'run',side_effect=command) as run, mock.patch.object(fresh.os,'chown') as chown:
+                fresh.provision()
+            self.assertEqual(image.stat().st_size,4096)
+            self.assertTrue((target/fresh.MARKER).is_file())
+            self.assertEqual(len(list(target.iterdir())),len(fresh.REQUIRED)+1)
+            chown.assert_has_calls([mock.call(target/name,999,999) for name in fresh.REQUIRED])
+            calls=[call.args for call in run.call_args_list]
+            mkfs=('mkfs.ext4','-F','-q','-E','nodiscard',str(image))
+            sync=('sync','-f',str(image))
+            self.assertLess(calls.index(('chattr','+C',str(image))),calls.index(mkfs))
+            self.assertLess(calls.index(mkfs),calls.index(sync))
+            self.assertIn(('mount','-o','loop,noatime,nosuid,nodev',str(image),str(target)),calls)
+            self.assertFalse(any(call and call[0]=='docker' for call in calls))
+
+
+if __name__=='__main__':unittest.main()
