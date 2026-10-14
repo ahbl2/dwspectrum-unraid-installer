@@ -51,8 +51,6 @@ class FreshInstallTests(unittest.TestCase):
         self.assertIn("!='false'",s)
         self.assertIn('verify(str(archive))',s)
 
-if __name__=='__main__':unittest.main()
-
 class UpdateAndRecoveryPolicyTests(unittest.TestCase):
     def test_candidate_digest_required(self):
         script=ROOT/'scripts/update-plan.py';version=ROOT/'versions/6.1.2.42997.env'
@@ -153,10 +151,10 @@ class FormattingReservationTests(unittest.TestCase):
             image=Path(td)/'storage.ext4'
             fd=os.open(image,os.O_CREAT|os.O_RDWR,0o600)
             try:
-                os.posix_fallocate(fd,0,fresh.CAPACITY)
+                os.posix_fallocate(fd,0,4096)
             finally:
                 os.close(fd)
-            with mock.patch.object(fresh,'IMAGE',image), mock.patch.object(fresh,'run') as run, mock.patch.object(fresh,'assert_reserved_space') as check:
+            with mock.patch.object(fresh,'IMAGE',image), mock.patch.object(fresh,'CAPACITY',4096), mock.patch.object(fresh,'run') as run, mock.patch.object(fresh,'assert_reserved_space') as check:
                 fresh.ensure_formatted_reservation()
             self.assertEqual([call.args for call in run.call_args_list],[("sync","-f",str(image))])
             check.assert_called_once_with()
@@ -201,15 +199,20 @@ class FreshGuardCoverageTests(unittest.TestCase):
                 fresh.check_cache()
 
     def test_check_cache_refuses_mounted_target_existing_image_nonempty_target_and_low_space(self):
-        cases=('mounted','image','nonempty','low-space')
-        for case in cases:
+        cases={
+            'mounted':'quarantine target already mounted',
+            'image':'backing file already exists',
+            'nonempty':'target contains existing files',
+            'low-space':'insufficient cache headroom',
+        }
+        for case,reason in cases.items():
             with self.subTest(case=case), tempfile.TemporaryDirectory() as td:
                 cache,target,image=self._cache_paths(Path(td))
                 if case=='image': image.write_bytes(b'keep')
                 if case=='nonempty': (target/'keep').write_text('keep')
                 mounts=[True,case=='mounted']
                 avail=fresh.CAPACITY+15*1024**3-1 if case=='low-space' else fresh.CAPACITY+15*1024**3
-                with mock.patch.object(fresh,'CACHE',cache), mock.patch.object(fresh,'TARGET',target), mock.patch.object(fresh,'IMAGE',image), mock.patch.object(fresh.os,'geteuid',return_value=0), mock.patch.object(fresh,'mounted',side_effect=mounts), mock.patch.object(fresh,'run',side_effect=['btrfs',str(avail)]), self.assertRaises(fresh.Refused):
+                with mock.patch.object(fresh,'CACHE',cache), mock.patch.object(fresh,'TARGET',target), mock.patch.object(fresh,'IMAGE',image), mock.patch.object(fresh.os,'geteuid',return_value=0), mock.patch.object(fresh,'mounted',side_effect=mounts), mock.patch.object(fresh,'run',side_effect=['btrfs',str(avail)]), self.assertRaisesRegex(fresh.Refused,reason):
                     fresh.check_cache()
 
     def test_assert_reserved_space_requires_exact_size_and_real_blocks(self):
@@ -224,7 +227,7 @@ class FreshGuardCoverageTests(unittest.TestCase):
                 with mock.patch.object(fresh,'CAPACITY',8192), self.assertRaisesRegex(fresh.Refused,'not fully allocated'):
                     fresh.assert_reserved_space()
 
-    def test_recovery_mount_accepts_verified_loop_and_refuses_unmounted_data(self):
+    def test_recovery_mount_accepts_verified_loop(self):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td); cache=root/'cache'; cache.mkdir(); target=root/'target'; target.mkdir(); image=root/'volume.ext4'
             with image.open('wb') as f: os.posix_fallocate(f.fileno(),0,4096)
@@ -260,5 +263,12 @@ class FreshGuardCoverageTests(unittest.TestCase):
             self.assertEqual(len(list(target.iterdir())),len(fresh.REQUIRED)+1)
             chown.assert_has_calls([mock.call(target/name,999,999) for name in fresh.REQUIRED])
             calls=[call.args for call in run.call_args_list]
-            self.assertLess(calls.index(('chattr','+C',str(image))),calls.index(('mkfs.ext4','-F','-q','-E','nodiscard',str(image))))
+            mkfs=('mkfs.ext4','-F','-q','-E','nodiscard',str(image))
+            sync=('sync','-f',str(image))
+            self.assertLess(calls.index(('chattr','+C',str(image))),calls.index(mkfs))
+            self.assertLess(calls.index(mkfs),calls.index(sync))
             self.assertIn(('mount','-o','loop,noatime,nosuid,nodev',str(image),str(target)),calls)
+            self.assertFalse(any(call and call[0]=='docker' for call in calls))
+
+
+if __name__=='__main__':unittest.main()
