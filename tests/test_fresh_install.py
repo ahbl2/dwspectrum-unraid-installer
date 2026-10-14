@@ -1,5 +1,6 @@
 """No root, mkfs, Docker start, or live Unraid mount required to test refusals."""
 import importlib.util
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -146,6 +147,20 @@ class FormattingReservationTests(unittest.TestCase):
                 ('sync','-f',str(image)),
             ])
             check.assert_called_once_with()
+
+    def test_formatted_reservation_skips_top_up_when_blocks_are_reserved(self):
+        with tempfile.TemporaryDirectory() as td:
+            image=Path(td)/'storage.ext4'
+            fd=os.open(image,os.O_CREAT|os.O_RDWR,0o600)
+            try:
+                os.posix_fallocate(fd,0,fresh.CAPACITY)
+            finally:
+                os.close(fd)
+            with mock.patch.object(fresh,'IMAGE',image), mock.patch.object(fresh,'run') as run, mock.patch.object(fresh,'assert_reserved_space') as check:
+                fresh.ensure_formatted_reservation()
+            self.assertEqual([call.args for call in run.call_args_list],[("sync","-f",str(image))])
+            check.assert_called_once_with()
+
     def test_recovery_mounts_missing_loop_and_refuses_nonempty_target(self):
         source=(ROOT/'scripts/fresh-install.py').read_text()
         self.assertIn("'loop,noatime,nosuid,nodev'",source)
