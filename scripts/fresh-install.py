@@ -53,6 +53,16 @@ def assert_reserved_space():
     if st.st_size != CAPACITY or st.st_blocks * 512 < CAPACITY:
         raise Refused('image not fully allocated; cache exhaustion risk')
 
+def ensure_formatted_reservation():
+    # ext4 formatting can leave Btrfs delayed-allocation accounting short until
+    # metadata is committed. Flush, top up only missing extents, then recheck.
+    run('sync','-f',str(IMAGE))
+    st=IMAGE.stat()
+    if st.st_blocks * 512 < CAPACITY:
+        run('fallocate','--keep-size','--length',str(CAPACITY),str(IMAGE))
+        run('sync','-f',str(IMAGE))
+    assert_reserved_space()
+
 def recovery_mount():
     if os.geteuid()!=0 or not mounted(CACHE):
         raise Refused('recovery requires root and mounted cache')
@@ -88,7 +98,7 @@ def provision():
         os.fsync(fd)
         os.close(fd);fd=None
         run('mkfs.ext4','-F','-q','-E','nodiscard',str(IMAGE))
-        assert_reserved_space()
+        ensure_formatted_reservation()
         run('mount','-o','loop,noatime,nosuid,nodev',str(IMAGE),str(TARGET))
         if run('findmnt','-rn','-T',str(TARGET),'-o','FSTYPE')!='ext4':
             raise Refused('mounted filesystem is not ext4')

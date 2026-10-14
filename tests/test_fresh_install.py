@@ -132,7 +132,20 @@ class FormattingReservationTests(unittest.TestCase):
     def test_mkfs_does_not_discard_preallocated_blocks(self):
         source=(ROOT/'scripts/fresh-install.py').read_text()
         self.assertIn("'mkfs.ext4','-F','-q','-E','nodiscard'",source)
-        self.assertIn('st.st_blocks * 512',source)
+        self.assertIn('ensure_formatted_reservation()',source)
+
+    def test_formatted_reservation_tops_up_missing_extent_after_sync(self):
+        with tempfile.TemporaryDirectory() as td:
+            image=Path(td)/'storage.ext4'
+            with image.open('wb') as f:f.truncate(fresh.CAPACITY)
+            with mock.patch.object(fresh,'IMAGE',image), mock.patch.object(fresh,'run') as run, mock.patch.object(fresh,'assert_reserved_space') as check:
+                fresh.ensure_formatted_reservation()
+            self.assertEqual([call.args for call in run.call_args_list],[
+                ('sync','-f',str(image)),
+                ('fallocate','--keep-size','--length',str(fresh.CAPACITY),str(image)),
+                ('sync','-f',str(image)),
+            ])
+            check.assert_called_once_with()
     def test_recovery_mounts_missing_loop_and_refuses_nonempty_target(self):
         source=(ROOT/'scripts/fresh-install.py').read_text()
         self.assertIn("'loop,noatime,nosuid,nodev'",source)
