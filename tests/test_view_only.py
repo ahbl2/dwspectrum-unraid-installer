@@ -47,6 +47,11 @@ class ViewOnlyPolicyTests(unittest.TestCase):
         self.assertEqual(c['cpus'], 2.0)
         self.assertIn('@sha256:', c['image'])
 
+    def test_image_defaults_to_nonroot(self):
+        dockerfile = (ROOT / "Dockerfile").read_text().splitlines()
+        self.assertIn("USER 999:999", dockerfile)
+        self.assertLess(dockerfile.index("USER 999:999"), dockerfile.index("ENTRYPOINT [\"/usr/local/bin/dw-entrypoint\"]"))
+
     def test_entrypoint_explicitly_blocks_recording(self):
         entry = self.compose['entrypoint'][-1]
         self.assertIn('! -w /dwdata/media', entry)

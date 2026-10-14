@@ -23,7 +23,7 @@ def main():
         for namepart in ('config','media','backup','analytics'):
             (data/namepart).mkdir(parents=True,exist_ok=True)
         root.chmod(0o755);data.chmod(0o755)
-        run('docker','run','--rm','--network','none','--entrypoint','/bin/sh','-v',str(data)+':/sandbox:rw',TAG,'-c','chown -R 999:999 /sandbox/config /sandbox/media /sandbox/backup /sandbox/analytics; chmod 750 /sandbox/config /sandbox/media /sandbox/backup /sandbox/analytics')
+        run('docker','run','--rm','--network','none','--user','0:0','--entrypoint','/bin/sh','-v',str(data)+':/sandbox:rw',TAG,'-c','chown -R 999:999 /sandbox/config /sandbox/media /sandbox/backup /sandbox/analytics; chmod 750 /sandbox/config /sandbox/media /sandbox/backup /sandbox/analytics')
         doc=yaml.safe_load((REPO/'compose.yaml').read_text())
         service=doc['services']['dwspectrum']
         service['image']=image
@@ -58,7 +58,7 @@ def main():
     finally:
         run('docker','compose','-p',project,'-f',str(manifest),'down','--remove-orphans',check=False) if manifest.exists() else None
         run('docker','rm','-f',name,check=False)
-        run('docker','run','--rm','--network','none','--entrypoint','/bin/sh','-v',str(root)+':/scratch:rw',TAG,'-c',f'chown -R {os.getuid()}:{os.getgid()} /scratch',check=False)
+        run('docker','run','--rm','--network','none','--user','0:0','--entrypoint','/bin/sh','-v',str(root)+':/scratch:rw',TAG,'-c',f'chown -R {os.getuid()}:{os.getgid()} /scratch',check=False)
         shutil.rmtree(root,ignore_errors=True)
 
 if __name__=='__main__':
