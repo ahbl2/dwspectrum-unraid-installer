@@ -24,5 +24,6 @@ RUN set -eux; \
  ln -s /dwdata/config/ini /home/digitalwatchdog/.config/nx_ini
 COPY docker-entrypoint.sh /usr/local/bin/dw-entrypoint
 RUN chmod 755 /usr/local/bin/dw-entrypoint
+USER 999:999
 EXPOSE 7001
 ENTRYPOINT ["/usr/local/bin/dw-entrypoint"]

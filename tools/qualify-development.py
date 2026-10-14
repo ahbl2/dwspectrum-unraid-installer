@@ -29,6 +29,10 @@ def check():
     results['approved_compose_keys']=(set(manifest)=={'services'} and set(service)<=approved_service_keys)
     results['approved_volume_keys']=all(set(v)=={'type','source','target','read_only','bind'} and set(v.get('bind',{}))=={'create_host_path'} for v in service['volumes'])
     volumes={x['target']:(x['source'],bool(x.get('read_only'))) for x in service['volumes']}
+    image_file=ROOT/'Dockerfile'
+    image_lines=[line.strip() for line in image_file.read_text().splitlines() if line.strip() and not line.lstrip().startswith('#')] if image_file.is_file() else []
+    users=[line for line in image_lines if line.upper().startswith('USER ')]
+    results['image_nonroot_default']=bool(users) and users[-1]=='USER 999:999' and image_lines.index(users[-1]) < next((i for i,line in enumerate(image_lines) if line.startswith('ENTRYPOINT ')),len(image_lines))
     results['immutable_image_template']='@sha256:' in service['image']
     results['recording_mount_readonly']=volumes.get('/dwdata')==('/mnt/cache/dwspectrum-quarantine',True)
     results['config_only_writable']=volumes.get('/dwdata/config')==('/mnt/cache/dwspectrum-quarantine/config',False) and len(volumes)==2
